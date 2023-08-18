@@ -3,8 +3,8 @@
 //
 
 #include "RMessageQueue.h"
-
 #include "RMessage.h"
+#include "RLog.h"
 
 namespace rgaa {
 
@@ -22,43 +22,51 @@ namespace rgaa {
         if (messages_.size() > max_messages_) {
             messages_.pop();
         }
-        messages_cv_.notify_one();
+        messages_cv_.notify_all();
     }
 
     std::shared_ptr<Message> MessageQueue::Peek() {
         std::unique_lock<std::mutex> guard(messages_mtx_);
-        if (messages_.empty()) {
-            messages_cv_.wait(guard);
-        }
+        messages_cv_.wait(guard, [this]() -> bool {
+            return !messages_.empty();
+        });
+
         auto msg = messages_.front();
         messages_.pop();
         return msg;
     }
 
-    void MessageQueue::RegisterTask(int target_code, MessageTask&& task) {
-        if(tasks_.find(target_code) == tasks_.end()) {
-            std::vector<MessageTask> tks;
-            tks.push_back(std::move(task));
-            tasks_.insert(std::make_pair(target_code, tks));
-        }
-        else {
-            auto& tks = tasks_[target_code];
-            tks.push_back(std::move(task));
-        }
+    int MessageQueue::RegisterTask(const MessageTaskPtr& task) {
+        int task_id = ++msg_task_idx_;
+        task->task_id_ = task_id;
+        tasks_.push_back(task);
+        return task_id;
     }
 
-    void MessageQueue::NotifyTasks(const std::shared_ptr<Message>& msg) {
-        if (tasks_.find(msg->code) != tasks_.end()) {
-            auto& tks = tasks_[msg->code];
-            for (const auto& tk : tks) {
-                tk(msg);
+    void MessageQueue::RemoveTask(int task_id) {
+        auto it = tasks_.begin();
+        while (it != tasks_.end()) {
+            auto task = *it;
+            if (task->task_id_ == task_id) {
+                it = tasks_.erase(it);
+            }
+            else {
+                it++;
             }
         }
     }
 
-    void MessageQueue::Poll() {
-        std::shared_ptr<Message> msg = nullptr;
-        while ((msg = this->Peek()) != nullptr) {
+    void MessageQueue::NotifyTasks(const std::shared_ptr<Message>& msg) {
+        for (const auto& task : tasks_) {
+            if (task && task->action_code_ == msg->code && task->action_exec_) {
+                task->action_exec_(msg);
+            }
+        }
+    }
+
+    void MessageQueue::PollBlocked() {
+        while (!exit_) {
+            auto msg = Peek();
             if (msg->code == kCodeExit) {
                 break;
             }
@@ -67,6 +75,7 @@ namespace rgaa {
     }
 
     void MessageQueue::Exit() {
+        exit_ = true;
         this->Queue(ExitMessage::Make());
     }
 

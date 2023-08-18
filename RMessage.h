@@ -18,7 +18,7 @@ namespace rgaa {
 
         }
 
-        int code;
+        int code {0};
 
 
     };

@@ -11,12 +11,32 @@
 #include <condition_variable>
 #include <functional>
 #include <unordered_map>
+#include <atomic>
 
 namespace rgaa {
 
     class Message;
 
-    using MessageTask = std::function<void(const std::shared_ptr<Message>&)>;
+    using MessageTaskExec = std::function<void(const std::shared_ptr<Message>&)>;
+
+    class MessageTask {
+    public:
+
+        static std::shared_ptr<MessageTask> Make(int code, MessageTaskExec&& exec) {
+            auto task = std::make_shared<MessageTask>();
+            task->action_code_ = code;
+            task->action_name_ = "";
+            task->action_exec_ = std::move(exec);
+            return task;
+        }
+
+        int task_id_ = {0};
+        int action_code_ {0};
+        std::string action_name_ {};
+        MessageTaskExec action_exec_;
+
+    };
+    using MessageTaskPtr = std::shared_ptr<MessageTask>;
 
     class MessageQueue {
     public:
@@ -26,10 +46,11 @@ namespace rgaa {
 
         void Queue(const std::shared_ptr<Message>& msg);
         std::shared_ptr<Message> Peek();
-        void Poll();
+        void PollBlocked();
         void Exit();
 
-        void RegisterTask(int target_code, MessageTask&& task);
+        int RegisterTask(const MessageTaskPtr& task);
+        void RemoveTask(int task_id);
 
     private:
 
@@ -41,7 +62,11 @@ namespace rgaa {
         std::mutex messages_mtx_;
         std::condition_variable messages_cv_;
         std::queue<std::shared_ptr<Message>> messages_;
-        std::unordered_map<int, std::vector<MessageTask>> tasks_;
+        std::vector<MessageTaskPtr> tasks_;
+
+        std::atomic_int msg_task_idx_ = 0;
+
+        bool exit_ = false;
 
     };
 
