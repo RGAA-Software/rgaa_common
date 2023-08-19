@@ -17,6 +17,7 @@ namespace rgaa {
         explicit Message(int c) : code(c) {
 
         }
+        virtual ~Message() {}
 
         int code {0};
 
